@@ -8,14 +8,14 @@ from io import BytesIO
 import re
 
 st.set_page_config(page_title="منصة الامتحانات", layout="centered")
-st.title("نظام توليد الأسئلة الامتحانية (4 خيارات)")
+st.title("نظام توليد الأسئلة الامتحانية (4 خيارات - قالب مفصول)")
 
-# اسم قالبك الجديد 
+# تأكد من وضع اسم القالب الصحيح هنا
 TEMPLATE_FILE = 'نموذج  اسئلة امتحان مشترك 2026.docx' 
 
-# --- دالة "القبضة الحديدية" للمحاذاة ---
+# --- دالة المحاذاة ---
 def force_rtl(paragraph):
-    """تجبر الفقرة على المحاذاة لليمين مع إزالة أي هوامش تعيق ذلك"""
+    """تجبر الفقرة على المحاذاة لليمين"""
     paragraph.paragraph_format.left_indent = None
     paragraph.paragraph_format.right_indent = None
     paragraph.paragraph_format.first_line_indent = None
@@ -47,7 +47,6 @@ def expand_tf_table(table, current_slots, target_slots):
         for _ in range(needed):
             add_row_copy(table, last_row_idx)
 
-# --- دوال عامة ---
 def set_document_font_size(doc, size):
     for p in doc.paragraphs:
         for run in p.runs: run.font.size = Pt(size)
@@ -61,7 +60,7 @@ def is_header_table(table):
     txt = "".join(cell.text for row in table.rows for cell in row.cells)
     return ("جامعة" in txt or "الامتحان" in txt)
 
-# --- قراءة الأسئلة (معدلة لـ 4 خيارات) ---
+# --- قراءة الأسئلة (4 خيارات) ---
 def read_questions(file):
     doc = Document(file)
     mcq_list = []
@@ -77,13 +76,12 @@ def read_questions(file):
             current_mode = "TF"; i += 1; continue
             
         if current_mode == "MCQ":
-            # التعديل هنا: نأخذ 4 أسطر للخيارات فقط
             if i + 4 < len(lines):
                 q = lines[i]
                 opts = lines[i+1:i+5] 
                 if not any("#" in opt for opt in opts):
                     mcq_list.append({"q": q, "opts": opts})
-                    i += 5; continue # القفز 5 أسطر (سؤال + 4 خيارات)
+                    i += 5; continue
         elif current_mode == "TF":
             tf_list.append(line)
             i += 1; continue
@@ -104,7 +102,7 @@ def generate_exam(mcq_data, tf_data, template_path, target_mcq_count, target_tf_
     tf_idx = 0
     current_shuffled_opts = None 
     
-    # === المرحلة 1: التوسيع ===
+    # === التوسيع ===
     for table in doc.tables:
         if is_header_table(table): continue
         row_txt = ""
@@ -117,13 +115,12 @@ def generate_exam(mcq_data, tf_data, template_path, target_mcq_count, target_tf_
             current_slots = sum(1 for row in table.rows if "A" in "".join([c.text for c in row.cells]))
             if target_mcq_count > current_slots:
                 expand_mcq_table(table, current_slots, target_mcq_count)
-
         elif "(" in row_txt and ")" in row_txt and "A" not in row_txt:
             current_slots = sum(1 for row in table.rows if "(" in "".join([c.text for c in row.cells]))
             if target_tf_count > current_slots:
                 expand_tf_table(table, current_slots, target_tf_count)
 
-    # === المرحلة 2: التعبئة والمحاذاة ===
+    # === التعبئة والمحاذاة ===
     for table in doc.tables:
         if is_header_table(table): continue
 
@@ -133,32 +130,36 @@ def generate_exam(mcq_data, tf_data, template_path, target_mcq_count, target_tf_
                 row_txt_sample += "".join([c.text for c in row.cells])
         except: pass
 
-        # الاختياري
         if "A" in row_txt_sample and "B" in row_txt_sample:
             for row in table.rows:
                 cells = row.cells
                 full_row = "".join([c.text for c in cells])
                 
-                # أ) سؤال الاختياري: البحث عن `...` أو رقم مثل `1-`
-                if "A" not in full_row and ("..." in full_row or bool(re.search(r'\d+-', full_row))):
+                # أ) سؤال الاختياري (تم التعديل هنا)
+                if "A" not in full_row and bool(re.search(r'\d+-', full_row)):
                     if mcq_idx < len(final_mcq):
                         current_opts = final_mcq[mcq_idx]['opts']
                         current_shuffled_opts = list(current_opts)
                         random.shuffle(current_shuffled_opts)
                         q_text = final_mcq[mcq_idx]['q']
                         
-                        for cell in cells:
-                            for p in cell.paragraphs:
-                                if "..." in p.text:
-                                    p.text = re.sub(r'\.{3,}', q_text, p.text)
-                                    force_rtl(p)
-                                elif re.search(r'\d+-', p.text):
-                                    p.text = p.text.strip() + " " + q_text
-                                    force_rtl(p)
+                        for i in range(len(cells)):
+                            # إذا وجدنا خلية الترقيم مثل 1-
+                            if re.search(r'\d+-', cells[i].text):
+                                # نضع نص السؤال في الخلية التي تليها مباشرة
+                                if i + 1 < len(cells):
+                                    cells[i+1].text = q_text
+                                    for p in cells[i+1].paragraphs:
+                                        force_rtl(p)
+                                else:
+                                    # حالة احتياطية إذا لم توجد خلية تالية
+                                    cells[i].text = cells[i].text.strip() + " " + q_text
+                                    for p in cells[i].paragraphs:
+                                        force_rtl(p)
+                                break # نوقف البحث في هذا الصف بمجرد وضع السؤال
                 
-                # ب) خيارات الاختياري (تعديل جذري لـ 4 خيارات)
+                # ب) خيارات الاختياري
                 elif "A" in full_row and current_shuffled_opts:
-                    # ربط الخيارات بالحروف الأربعة فقط
                     opt_map = {
                         'A': current_shuffled_opts[0], 
                         'B': current_shuffled_opts[1], 
@@ -175,7 +176,6 @@ def generate_exam(mcq_data, tf_data, template_path, target_mcq_count, target_tf_
                     mcq_idx += 1
                     current_shuffled_opts = None
 
-        # الصح والخطأ
         elif "(" in row_txt_sample and ")" in row_txt_sample and "A" not in row_txt_sample:
             for row in table.rows:
                 if tf_idx < len(final_tf):
@@ -214,8 +214,8 @@ if uploaded_file:
         if st.button("توليد الامتحان"):
             try:
                 final_file = generate_exam(all_mcq, all_tf, TEMPLATE_FILE, mcq_count, tf_count)
-                st.download_button("📥 تحميل الامتحان المولد", final_file, "Exam_4_Options.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                st.download_button("📥 تحميل الامتحان المولد", final_file, "Exam_4_Options_Fixed.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 st.balloons()
-                st.success("تم توليد الامتحان بنجاح! حمل الملف وتأكد منه.")
+                st.success("تم توليد الامتحان بنجاح!")
             except Exception as e:
                 st.error(f"حدث خطأ أثناء التوليد: {e}")
